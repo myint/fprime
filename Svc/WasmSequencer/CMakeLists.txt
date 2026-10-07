@@ -173,3 +173,18 @@ if(TARGET Svc_WasmSequencer_ut_exe)
     target_compile_definitions(Svc_WasmSequencer_ut_exe PRIVATE
         WASM_SEQ_ASSET_DIR="${CMAKE_CURRENT_LIST_DIR}/test/wasm")
 endif()
+
+# End-to-end equivalence with Svc::CmdSequencer: the repository's example `.seq`
+# files, compiled by `fprime-wasm seq` and by `fprime-seqgen`, run through both
+# sequencers. The sequences are compiled outside the build; run
+# test/e2e/run_e2e.py, which builds this target and points it at them. Run on
+# its own, the executable skips.
+register_fprime_ut(
+    Svc_WasmSequencer_e2e
+    SOURCES
+        "${CMAKE_CURRENT_LIST_DIR}/test/e2e/SequencerE2eMain.cpp"
+        "${CMAKE_CURRENT_LIST_DIR}/test/e2e/SequencerBench.cpp"
+    DEPENDS
+        Svc_CmdSequencer
+        Svc_WasmSequencer
+)

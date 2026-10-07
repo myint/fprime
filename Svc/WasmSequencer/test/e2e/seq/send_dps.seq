@@ -1,0 +1,30 @@
+; Svc/DpCatalog/test/ut/seq/send_dps.seq, with its command names updated to
+; the current Ref topology (the catalog and dispatcher moved into the
+; DataProducts and CdhCore subtopologies; START_XMIT_CATALOG gained an argument).
+
+; Have signal generator generate a DP
+R00:00:00 Ref.SG1.Settings, 1, 10, 1, TRIANGLE
+R00:00:02 Ref.SG1.Toggle
+R00:00:05 Ref.SG1.Dp, IMMEDIATE, 10, 10
+R00:00:15 Ref.SG1.Dp, ASYNC, 15, 2
+R00:00:20 Ref.SG1.Dp, IMMEDIATE, 20, 6
+R00:00:25 Ref.SG1.Dp, ASYNC, 25, 2
+R00:00:30 Ref.SG1.Dp, IMMEDIATE, 30, 7
+
+R00:00:00 CdhCore.cmdDisp.CMD_NO_OP_STRING, "Wait for Build"
+
+; Build the catalog
+R00:00:35 DataProducts.dpCat.BUILD_CATALOG
+; Send the files
+R00:00:00 DataProducts.dpCat.START_XMIT_CATALOG, WAIT, false
+
+; try to send again
+R00:00:00 DataProducts.dpCat.START_XMIT_CATALOG, WAIT, false
+
+R00:00:00 CdhCore.cmdDisp.CMD_NO_OP_STRING, "Wait for 2nd Build"
+
+
+; Build the catalog
+R00:00:00 DataProducts.dpCat.BUILD_CATALOG
+; Send the files
+R00:00:00 DataProducts.dpCat.START_XMIT_CATALOG, WAIT, false

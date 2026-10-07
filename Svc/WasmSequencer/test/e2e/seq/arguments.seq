@@ -1,0 +1,32 @@
+; One command for each kind of argument, at the edges of each type's range.
+
+; Every scalar type, minimum and maximum
+R00:00:00 Ref.typeDemo.SEND_SCALARS {i8: -128, i16: -32768, i32: -2147483648, i64: -9223372036854775808, u8: 0, u16: 0, u32: 0, u64: 0, f32: -3.4028234663852886e38, f64: -1.7976931348623157e308}
+R00:00:00 Ref.typeDemo.SEND_SCALARS {i8: 127, i16: 32767, i32: 2147483647, i64: 9223372036854775807, u8: 255, u16: 65535, u32: 4294967295, u64: 18446744073709551615, f32: 3.4028234663852886e38, f64: 1.7976931348623157e308}
+R00:00:00 Ref.typeDemo.SEND_SCALARS {i8: 0, i16: -1, i32: 0x7F, i64: -42, u8: 0x10, u16: 1000, u32: 123456789, u64: 1, f32: 0.1, f64: 1e-300}
+
+; Integers, a float and a small integer, comma separated or not
+R00:00:00 CdhCore.cmdDisp.CMD_TEST_CMD_1, 2147483647, -0.5, 0
+R00:00:00 CdhCore.cmdDisp.CMD_TEST_CMD_1 -2147483648 1e10 255
+
+; Strings: empty, single quoted, full length, with spaces and punctuation
+R00:00:00 CdhCore.cmdDisp.CMD_NO_OP_STRING ""
+R00:00:00 CdhCore.cmdDisp.CMD_NO_OP_STRING 'single quoted'
+R00:00:00 CdhCore.cmdDisp.CMD_NO_OP_STRING "0123456789012345678901234567890123456789"
+R00:00:00 CdhCore.health.HLTH_CHNG_PING "a, b; and: c!" 100 200
+
+; Booleans and enums
+R00:00:00 DataProducts.dpCat.START_XMIT_CATALOG NO_WAIT true
+R00:00:00 DataProducts.dpCat.START_XMIT_CATALOG WAIT false
+R00:00:00 CdhCore.events.SET_EVENT_FILTER DIAGNOSTIC DISABLED
+R00:00:00 Ref.typeDemo.CHOICE BLUE
+
+; Arrays and structs, nested
+R00:00:00 Ref.typeDemo.CHOICES [RED, TWO]
+R00:00:00 Ref.typeDemo.EXTRA_CHOICES [[ONE, TWO], [RED, BLUE]]
+R00:00:00 Ref.typeDemo.CHOICE_PAIR_WITH_FRIENDS 3 {firstChoice: BLUE, secondChoice: RED} 7
+R00:00:00 Ref.typeDemo.GLUTTON_OF_CHOICE_WITH_FRIENDS 1 {tooManyChoices: [[BLUE, RED], [TWO, ONE]], separateChoice: RED, choicePair: {firstChoice: TWO, secondChoice: BLUE}, choiceAsMemberArray: [0, 255]} 2
+
+; Aliased integer types and a 64-bit unsigned argument
+R00:00:00 ComCcsds.comQueue.SET_QUEUE_PRIORITY COM_QUEUE -1 32767
+R00:00:00 FileHandling.fileManager.GenerateDp "/tmp/file" 512 0 18446744073709551615 3 IMMEDIATE

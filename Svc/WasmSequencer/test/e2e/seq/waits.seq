@@ -1,0 +1,10 @@
+; Relative waits from a microsecond to most of a day.
+
+R00:00:00.000001 CdhCore.cmdDisp.CMD_NO_OP
+R00:00:00.999999 CdhCore.cmdDisp.CMD_NO_OP
+R00:00:01 CdhCore.cmdDisp.CMD_NO_OP
+R00:00:00.5 CdhCore.cmdDisp.CMD_NO_OP_STRING "half a second"
+R00:00:00.05 CdhCore.cmdDisp.CMD_NO_OP_STRING "fifty milliseconds"
+R00:59:59.999999 CdhCore.cmdDisp.CMD_NO_OP_STRING "an hour, less a microsecond"
+R00:00:00 CdhCore.cmdDisp.CMD_NO_OP
+R23:59:59 CdhCore.cmdDisp.CMD_NO_OP_STRING "almost a day"
