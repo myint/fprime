@@ -207,6 +207,15 @@ Trace Bench::run(const char* file, const Scenario& scenario) {
             }
             this->advance();
         }
+
+        // A response still owed to a canceled run arrives before the next run
+        // starts. Arriving during it, CmdSequencer would take the late response
+        // as its new command's own, which WasmSequencer (rightly) does not.
+        while (this->m_pending.active && !this->m_pending.silent) {
+            if (!this->deliverDue()) {
+                this->advance();
+            }
+        }
     }
     return this->m_trace;
 }
