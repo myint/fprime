@@ -99,17 +99,17 @@ def find_fprime_wasm(args, work):
     return binary
 
 
-def find_e2e_executable(args):
-    """The Svc_WasmSequencer_e2e executable, built in the repository's unit test build."""
-    if args.ut_exe:
-        return Path(args.ut_exe).resolve()
+def build_executable(target, given=None):
+    """The `target` unit test executable: `given`, or built in the repository's unit test build."""
+    if given:
+        return Path(given).resolve()
     build = REPO / "build-fprime-automatic-native-ut"
     if not (build / "CMakeCache.txt").exists():
         run(["fprime-util", "generate", "--ut"], cwd=REPO)
-    run(["cmake", "--build", build, "--target", E2E_TARGET, "-j", str(os.cpu_count() or 1)])
-    found = sorted(build.glob(f"bin/*/{E2E_TARGET}"))
+    run(["cmake", "--build", build, "--target", target, "-j", str(os.cpu_count() or 1)])
+    found = sorted(build.glob(f"bin/*/{target}"))
     if not found:
-        sys.exit(f"{E2E_TARGET} was not built under {build}")
+        sys.exit(f"{target} was not built under {build}")
     return found[0]
 
 
@@ -220,7 +220,7 @@ def main():
 
     dictionary = find_dictionary(args)
     fprime_wasm = find_fprime_wasm(args, work)
-    executable = find_e2e_executable(args)
+    executable = build_executable(E2E_TARGET, args.ut_exe)
     names = command_names(dictionary)
     log(f"dictionary: {dictionary}")
     log(f"fprime-wasm: {fprime_wasm}")

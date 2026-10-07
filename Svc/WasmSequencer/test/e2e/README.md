@@ -1,7 +1,9 @@
 # WasmSequencer / CmdSequencer end-to-end equivalence
 
-This test checks that a `.seq` command sequence behaves the same on
-`Svc::WasmSequencer` as on `Svc::CmdSequencer`.
+These tests check that a `.seq` command sequence behaves the same on
+`Svc::WasmSequencer` as on `Svc::CmdSequencer`. The end-to-end test runs the
+repository's example sequences. The [differential fuzzer](#differential-fuzzing)
+runs random sequences and scenarios, with `CmdSequencer` as the oracle.
 
 Each sequence is compiled twice against the `Ref` deployment's dictionary:
 
@@ -92,15 +94,21 @@ times:
 
 This is expected. When a scenario reaches such a command, the two traces are
 not compared with each other. Instead, each one is checked against its own
-reference, and WasmSequencer's reference includes the one-tick delay. In
+reference, and WasmSequencer's reference includes the one-tick delay. A
+scenario with a cancel has no reference, so its traces are compared up to the
+first such command. After that, the delay can legitimately leave the cancel
+finding the two sequencers in different states. The rules are in `judge()` in
+[`SequenceModel.hpp`](SequenceModel.hpp), shared by both tests. In
 [`absolute_times.seq`](seq/absolute_times.seq), this applies to the commands
 tagged with a time that has already passed, and to every scenario that starts
 after all of the absolute times.
 
-`fprime-seqgen` converts an absolute time to floating-point seconds since 1970,
-which loses microseconds: `12:01:00.000001` becomes `12:01:00`.
-`fprime-wasm seq` keeps them. The sub-second absolute time in
-`absolute_times.seq` is therefore `.5`, which both tools represent exactly.
+`fprime-seqgen` converts a time tag to floating-point seconds and truncates it,
+which can lose a microsecond. For example, `A2026-001T12:01:00.000001` becomes
+`12:01:00`, and `R00:00:28.495765` becomes 28.495764 s. `fprime-wasm seq` keeps
+the exact value. The sub-second absolute time in `absolute_times.seq` is
+therefore `.5`, which both tools represent exactly. The fuzzer only writes
+times that `fprime-seqgen` encodes exactly.
 
 ## Sequences
 
@@ -114,3 +122,87 @@ cover what the repository's examples do not:
 * [`waits.seq`](seq/waits.seq): relative waits from 1 µs to almost a day.
 * [`send_dps.seq`](seq/send_dps.seq): `Svc/DpCatalog/test/ut/seq/send_dps.seq`,
   updated to the current `Ref` command names.
+
+## Differential fuzzing
+
+[`fuzz.py`](fuzz.py) generates random sequences in the legacy `.seq` syntax and
+random scenarios to run them in. It compiles each sequence with `fprime-seqgen`
+and with `fprime-wasm seq`, then runs both through the `Svc_WasmSequencer_fuzz`
+executable on the same benches as the end-to-end test. `CmdSequencer` is the
+oracle: `WasmSequencer` must do exactly what it does, apart from the
+[expected difference](#expected-difference).
+
+```shell
+Svc/WasmSequencer/test/e2e/fuzz.py --cases 1000 --seed 1
+Svc/WasmSequencer/test/e2e/fuzz.py --seconds 3600       # for an hour, with a random seed
+```
+
+The run is reproducible from the seed it prints. Tool options (`--dictionary`,
+`--fprime-wasm`, `--ut-exe`, `--work-dir`) are the same as for `run_e2e.py`.
+
+### What it generates
+
+* **Sequences** of 1 to 30 commands, drawn from every command in the
+  dictionary. Arguments of every type are generated from the dictionary:
+  * integers at and inside their limits, in decimal, hex, `+`-signed and
+    `1_000` forms
+  * floats in several notations, including signed zero, extremes and
+    subnormals
+  * strings from empty to full length, in either quote
+  * booleans
+  * enum constants
+  * arrays, with or without a trailing comma
+  * structs, with members in or out of order
+
+  A command is named in full or by a unique suffix. Lines get relative waits
+  from zero to ten minutes, and absolute times from five minutes before the
+  start to ten minutes after. Commas, indentation, comments and blank lines are
+  sprinkled in.
+* **Scenarios**:
+  * the start time anywhere in 2026, to the microsecond
+  * a rate group of 1 kHz, 100 Hz, 10 Hz or 1 Hz
+  * response latency from zero to five seconds
+  * a command answered with a failure, or never answered
+  * a cancel at a random time
+  * a second run on the same instance
+* **Invalid sequences** (`--invalid-rate`, 10% by default): an unknown command,
+  an argument out of range or of the wrong kind, a string too long, or a
+  malformed time tag. Both compilers must reject these.
+
+The generator stays within the syntax both compilers accept. `fprime-seqgen` is
+more lenient than `fprime-wasm seq` in ways that are not worth reporting: it
+accepts too few or too many arguments, unquoted strings, `inf`, day 366 of a
+non-leap year, and only full command names. The copy given to `fprime-seqgen`
+names each command in full.
+
+### Findings
+
+Each case ends in one of these outcomes:
+
+| Outcome | Meaning |
+|---|---|
+| `pass` | `WasmSequencer` did what `CmdSequencer` did. |
+| `rejected` | Both compilers rejected a sequence made invalid on purpose. |
+| `behavior` | **`WasmSequencer` departs from `CmdSequencer`**: a command, time, start or completion report differs. |
+| `compile` | One compiler accepts a sequence and the other rejects it, or both accept one made invalid. |
+| `crash` | The test executable died, for example on an assertion or a sanitizer error. |
+| `model` | `CmdSequencer` departs from the reference model. This points at the harness, not at `WasmSequencer`. |
+| `generator` | Both compilers rejected a sequence meant to be valid. This points at the generator. |
+| `seqgen-time` | `fprime-seqgen` encoded a different time than the one written. The case is skipped. |
+
+The fuzzer saves each finding under `<work-dir>/fuzz/findings/<outcome>-<case>/`.
+It first minimizes the finding: it simplifies the scenario, then drops lines
+while the case still fails the same way. `--no-minimize` turns this off. Each
+finding directory holds the following:
+* `original.seq`, the sequence as generated
+* `case.seq` and `scenario.json`, the minimized case
+* the compiled `.bin` and `.wasm`
+* `failure.txt`, what the test reported
+
+Replay a finding with:
+
+```shell
+Svc/WasmSequencer/test/e2e/fuzz.py --replay <finding directory>
+```
+
+The script exits nonzero if any finding was saved.

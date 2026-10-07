@@ -28,6 +28,7 @@
 #include <string>
 #include <vector>
 
+#include "Svc/WasmSequencer/test/e2e/SequenceModel.hpp"
 #include "Svc/WasmSequencer/test/e2e/SequencerBench.hpp"
 #include "gtest/gtest.h"
 
@@ -35,17 +36,6 @@ namespace Svc {
 namespace WasmSeqE2e {
 
 namespace {
-
-constexpr U64 US = 1000000;
-
-//! One record of a CmdSequencer `.bin`
-struct Record {
-    enum Descriptor : U8 { ABSOLUTE = 0, RELATIVE = 1, END_OF_SEQUENCE = 2 };
-    Descriptor descriptor;
-    U32 seconds;
-    U32 useconds;
-    std::vector<U8> packet;
-};
 
 //! A sequence compiled both ways
 struct Sequence {
@@ -55,57 +45,6 @@ struct Sequence {
     std::string wasm;    //!< WasmSequencer module, relative to the manifest
     std::vector<Record> records;
 };
-
-bool readFile(const std::string& path, std::vector<U8>& bytes) {
-    std::ifstream in(path, std::ios::binary);
-    if (!in) {
-        return false;
-    }
-    bytes.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
-    return true;
-}
-
-//! Read the command records out of a CmdSequencer F Prime sequence file
-bool parseBin(const std::string& path, std::vector<Record>& records, std::string& error) {
-    std::vector<U8> bytes;
-    if (!readFile(path, bytes)) {
-        error = "cannot read " + path;
-        return false;
-    }
-    Fw::ExternalSerializeBuffer buffer(bytes.data(), bytes.size());
-    if (buffer.setBuffLen(bytes.size()) != Fw::FW_SERIALIZE_OK) {
-        error = "cannot buffer " + path;
-        return false;
-    }
-    U32 size = 0;
-    U32 count = 0;
-    FwTimeBaseStoreType timeBase = 0;
-    FwTimeContextStoreType timeContext = 0;
-    bool ok = buffer.deserializeTo(size) == Fw::FW_SERIALIZE_OK && buffer.deserializeTo(count) == Fw::FW_SERIALIZE_OK &&
-              buffer.deserializeTo(timeBase) == Fw::FW_SERIALIZE_OK &&
-              buffer.deserializeTo(timeContext) == Fw::FW_SERIALIZE_OK;
-    for (U32 i = 0; ok && i < count; i++) {
-        U8 descriptor = 0;
-        Record record{};
-        ok = buffer.deserializeTo(descriptor) == Fw::FW_SERIALIZE_OK && descriptor <= Record::END_OF_SEQUENCE;
-        record.descriptor = static_cast<Record::Descriptor>(descriptor);
-        if (ok && record.descriptor != Record::END_OF_SEQUENCE) {
-            U32 length = 0;
-            ok = buffer.deserializeTo(record.seconds) == Fw::FW_SERIALIZE_OK &&
-                 buffer.deserializeTo(record.useconds) == Fw::FW_SERIALIZE_OK &&
-                 buffer.deserializeTo(length) == Fw::FW_SERIALIZE_OK && length <= buffer.getDeserializeSizeLeft();
-            if (ok) {
-                record.packet.assign(buffer.getBuffAddrLeft(), buffer.getBuffAddrLeft() + length);
-                ok = buffer.deserializeSkip(length) == Fw::FW_SERIALIZE_OK;
-            }
-        }
-        records.push_back(record);
-    }
-    if (!ok) {
-        error = "malformed sequence file " + path;
-    }
-    return ok;
-}
 
 std::vector<Sequence>& sequences() {
     static std::vector<Sequence> all;
@@ -137,78 +76,6 @@ bool loadManifest(const std::string& path, std::string& error) {
         sequences().push_back(sequence);
     }
     return true;
-}
-
-// ----------------------------------------------------------------------
-// The reference: what each sequencer's documented semantics say a run does
-// ----------------------------------------------------------------------
-
-U64 microseconds(const Fw::Time& time) {
-    return static_cast<U64>(time.getSeconds()) * US + time.getUSeconds();
-}
-
-//! First rate-group tick at or after `us`
-U64 tickAtOrAfter(U64 us, U32 tickUs) {
-    return ((us + tickUs - 1) / tickUs) * tickUs;
-}
-
-//! Whether `scenario` is one the reference models: no cancel of a running sequence
-bool hasReference(const Scenario& scenario) {
-    return scenario.cancelAtUs < 0;
-}
-
-//! The sequencer a reference is for
-enum class Sequencer { CMD, WASM };
-
-//! The trace `records` must produce under `scenario`. A relative record is due
-//! that long after the previous command completed (or the run started); an
-//! absolute record at its time. A command due now is dispatched at once; one
-//! due later, on the first tick at or after it is due. The exception is
-//! WasmSequencer's absolute record that is already due: `asleep` still waits,
-//! so the command is dispatched on the next tick. A command answered other
-//! than OK ends the run, as does one unanswered for COMMAND_TIMEOUT_S.
-Trace reference(const std::vector<Record>& records, const Scenario& scenario, Sequencer sequencer) {
-    Trace trace;
-    const U64 start = microseconds(scenario.start);
-    U64 now = 0;
-    I32 index = 0;
-    for (U32 run = 0; run < scenario.runs; run++) {
-        trace.push_back(Event{Event::SEQ_START, now, {}, Fw::CmdResponse::OK});
-        Fw::CmdResponse::T outcome = Fw::CmdResponse::OK;
-        for (const Record& record : records) {
-            if (record.descriptor == Record::END_OF_SEQUENCE) {
-                break;
-            }
-            const U64 tag = static_cast<U64>(record.seconds) * US + record.useconds;
-            U64 due = 0;
-            if (record.descriptor == Record::RELATIVE) {
-                due = now + tag;
-            } else {
-                due = (tag > start) ? tag - start : 0;
-            }
-            if (due > now) {
-                now = tickAtOrAfter(due, scenario.tickUs);
-            } else if (record.descriptor == Record::ABSOLUTE && sequencer == Sequencer::WASM) {
-                now = tickAtOrAfter(now + 1, scenario.tickUs);
-            }
-            trace.push_back(Event{Event::COMMAND, now, record.packet, Fw::CmdResponse::OK});
-            const I32 current = index++;
-            if (current == scenario.silentAt) {
-                now = tickAtOrAfter(now + Bench::COMMAND_TIMEOUT_S * US, scenario.tickUs);
-                outcome = Fw::CmdResponse::EXECUTION_ERROR;
-                break;
-            }
-            // The dispatcher's answer is delivered on the bench's step
-            now = tickAtOrAfter(now + scenario.latencyUs, scenario.tickUs);
-            if (current == scenario.failAt) {
-                outcome = Fw::CmdResponse::EXECUTION_ERROR;
-                break;
-            }
-        }
-        trace.push_back(Event{Event::SEQ_DONE, now, {}, outcome});
-        now = tickAtOrAfter(now + scenario.settleUs, scenario.tickUs);
-    }
-    return trace;
 }
 
 // ----------------------------------------------------------------------
@@ -364,40 +231,11 @@ class Equivalence : public ::testing::Test {
         std::unique_ptr<WasmSequencerBench> wasmBench(new WasmSequencerBench());
         const Trace wasmTrace = wasmBench->run(this->m_sequence.wasm.c_str(), this->m_scenario);
 
-        const std::string detail = "\n  CmdSequencer:\n" + describe(cmdTrace) + "  CmdSequencer events:\n" +
-                                   cmdBench->log() + "\n  WasmSequencer:\n" + describe(wasmTrace) +
-                                   "  WasmSequencer events:\n" + wasmBench->log();
-
-        EXPECT_TRUE(cmdBench->finished()) << "CmdSequencer did not finish" << detail;
-        EXPECT_TRUE(wasmBench->finished()) << "WasmSequencer did not finish" << detail;
-
-        // The behavior the sequence file calls for
-        bool sameReference = true;
-        if (hasReference(this->m_scenario)) {
-            const Trace cmdExpected = reference(this->m_sequence.records, this->m_scenario, Sequencer::CMD);
-            const Trace wasmExpected = reference(this->m_sequence.records, this->m_scenario, Sequencer::WASM);
-            EXPECT_TRUE(cmdTrace == cmdExpected) << "CmdSequencer departs from the reference\n  Reference:\n"
-                                                 << describe(cmdExpected) << detail;
-            EXPECT_TRUE(wasmTrace == wasmExpected) << "WasmSequencer departs from the reference\n  Reference:\n"
-                                                   << describe(wasmExpected) << detail;
-            sameReference = (cmdExpected == wasmExpected);
-        }
-        if (!sameReference) {
-            // An absolute time already past: the expected tick of difference,
-            // each trace checked against its own reference above
-            return;
-        }
-
-        // Same behavior, event by event
-        const size_t common = std::min(cmdTrace.size(), wasmTrace.size());
-        for (size_t i = 0; i < common; i++) {
-            if (cmdTrace[i] != wasmTrace[i]) {
-                ADD_FAILURE() << "first difference at event " << i << ":\n    CmdSequencer:  " << describe(cmdTrace[i])
-                              << "\n    WasmSequencer: " << describe(wasmTrace[i]) << detail;
-                return;
-            }
-        }
-        EXPECT_EQ(cmdTrace.size(), wasmTrace.size()) << "one sequencer did more than the other" << detail;
+        const std::string failure = judge(this->m_sequence.records, this->m_scenario, cmdTrace, cmdBench->finished(),
+                                          wasmTrace, wasmBench->finished());
+        EXPECT_TRUE(failure.empty()) << failure << "\n  CmdSequencer events:\n"
+                                     << cmdBench->log() << "  WasmSequencer events:\n"
+                                     << wasmBench->log();
     }
 
   private:

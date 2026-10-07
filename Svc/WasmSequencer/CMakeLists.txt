@@ -184,6 +184,21 @@ register_fprime_ut(
     SOURCES
         "${CMAKE_CURRENT_LIST_DIR}/test/e2e/SequencerE2eMain.cpp"
         "${CMAKE_CURRENT_LIST_DIR}/test/e2e/SequencerBench.cpp"
+        "${CMAKE_CURRENT_LIST_DIR}/test/e2e/SequenceModel.cpp"
+    DEPENDS
+        Svc_CmdSequencer
+        Svc_WasmSequencer
+)
+
+# Differential fuzzing of WasmSequencer, with CmdSequencer as the oracle, on
+# random sequences and scenarios. test/e2e/fuzz.py generates and compiles the
+# cases, then builds and runs this target on them. Run on its own, it does nothing.
+register_fprime_ut(
+    Svc_WasmSequencer_fuzz
+    SOURCES
+        "${CMAKE_CURRENT_LIST_DIR}/test/e2e/SequencerFuzzMain.cpp"
+        "${CMAKE_CURRENT_LIST_DIR}/test/e2e/SequencerBench.cpp"
+        "${CMAKE_CURRENT_LIST_DIR}/test/e2e/SequenceModel.cpp"
     DEPENDS
         Svc_CmdSequencer
         Svc_WasmSequencer
