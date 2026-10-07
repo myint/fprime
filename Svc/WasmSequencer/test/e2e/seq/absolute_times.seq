@@ -1,8 +1,12 @@
 ; Absolute time tags, alone and mixed with relative ones.
 ;
 ; The e2e test starts the clock a minute before the earliest absolute time
-; (2026-001T12:00:00Z), then again a minute after the latest, when every
+; (2026-001T11:00:00Z), then again a minute after the latest, when every
 ; absolute time has already passed.
+;
+; A command whose absolute time has already passed is dispatched at once by
+; CmdSequencer, but on the next rate group tick by WasmSequencer (a second
+; later at 1 Hz). The test expects that difference.
 
 A2026-001T12:00:00 CdhCore.cmdDisp.CMD_NO_OP
 ; Relative to the completion of the absolute command before it
@@ -13,4 +17,6 @@ A2026-001T12:00:30.250 CdhCore.cmdDisp.CMD_NO_OP
 ; Already in the past by the time it is reached
 A2026-001T11:00:00 CdhCore.cmdDisp.CMD_NO_OP_STRING "already past"
 R00:00:00 CdhCore.cmdDisp.CMD_NO_OP
-A2026-001T12:01:00.000001 CdhCore.cmdDisp.CMD_NO_OP_STRING "one microsecond in"
+; Sub-second, but exact in binary: fprime-seqgen converts an absolute time
+; through a float of seconds since 1970, which drops microseconds such as .000001
+A2026-001T12:01:00.5 CdhCore.cmdDisp.CMD_NO_OP_STRING "half a second in"

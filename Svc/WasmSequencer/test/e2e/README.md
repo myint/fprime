@@ -56,9 +56,12 @@ following:
   status
 
 Where the outcome follows from the `.bin` file alone (every scenario except the
-two cancels), the trace must also match a reference built from the file's
+two cancels), each trace must also match a reference built from the file's
 records. Without that check, the two sequencers could agree by both doing
 nothing.
+
+One difference between the two sequencers is expected; see
+[Expected difference](#expected-difference).
 
 Each sequence runs in the following scenarios:
 
@@ -77,13 +80,27 @@ Each sequence runs in the following scenarios:
 | `CancelAfterCompletion` | `seqCancelIn` is invoked with nothing running. |
 | `StartAfterAbsoluteTimes` | For a sequence with absolute times, the clock starts after every one of them. |
 
-## Known difference
+## Expected difference
 
-`absolute_times` fails. In CmdSequencer, a command whose absolute time has
-already passed is dispatched at once (`performCmd_Step_ABSOLUTE`). In
-WasmSequencer, `asleep` always waits for the next `checkTimers` tick, even when
-its deadline has already passed. Each such command is therefore dispatched one
-rate group period late, and every later command is delayed with it.
+A command whose absolute time has already passed is dispatched at different
+times:
+
+* CmdSequencer dispatches it at once (`performCmd_Step_ABSOLUTE`).
+* WasmSequencer's `asleep` wakes only on a `checkTimers` tick, so it dispatches
+  the command on the next tick: one rate group period later, which is one
+  second at 1 Hz. Every later command is delayed with it.
+
+This is expected. When a scenario reaches such a command, the two traces are
+not compared with each other. Instead, each one is checked against its own
+reference, and WasmSequencer's reference includes the one-tick delay. In
+[`absolute_times.seq`](seq/absolute_times.seq), this applies to the commands
+tagged with a time that has already passed, and to every scenario that starts
+after all of the absolute times.
+
+`fprime-seqgen` converts an absolute time to floating-point seconds since 1970,
+which loses microseconds: `12:01:00.000001` becomes `12:01:00`.
+`fprime-wasm seq` keeps them. The sub-second absolute time in
+`absolute_times.seq` is therefore `.5`, which both tools represent exactly.
 
 ## Sequences
 

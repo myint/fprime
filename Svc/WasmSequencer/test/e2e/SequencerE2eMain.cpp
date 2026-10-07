@@ -8,8 +8,13 @@
 // scenario below runs both on identical benches and requires the two traces --
 // each command's bytes and dispatch time, the start and completion reports
 // and the completion status -- to be identical. Where the scenario's outcome
-// follows from the `.bin` alone, the traces must also match that reference,
-// so the two cannot agree by both doing nothing.
+// follows from the `.bin` alone, each trace must also match a reference built
+// from it, so the two cannot agree by both doing nothing.
+//
+// One difference is expected: a command whose absolute time has already
+// passed is dispatched at once by CmdSequencer, but one rate group tick later
+// by WasmSequencer, whose `asleep` wakes only on `checkTimers`. Where that
+// happens, each sequencer is held to its own reference instead.
 // ======================================================================
 
 #include <unistd.h>
@@ -135,7 +140,7 @@ bool loadManifest(const std::string& path, std::string& error) {
 }
 
 // ----------------------------------------------------------------------
-// The reference: what CmdSequencer's documented semantics say a run does
+// The reference: what each sequencer's documented semantics say a run does
 // ----------------------------------------------------------------------
 
 U64 microseconds(const Fw::Time& time) {
@@ -152,12 +157,17 @@ bool hasReference(const Scenario& scenario) {
     return scenario.cancelAtUs < 0;
 }
 
+//! The sequencer a reference is for
+enum class Sequencer { CMD, WASM };
+
 //! The trace `records` must produce under `scenario`. A relative record is due
 //! that long after the previous command completed (or the run started); an
 //! absolute record at its time. A command due now is dispatched at once; one
-//! due later, on the first tick at or after it is due. A command answered
-//! other than OK ends the run, as does one unanswered for COMMAND_TIMEOUT_S.
-Trace reference(const std::vector<Record>& records, const Scenario& scenario) {
+//! due later, on the first tick at or after it is due. The exception is
+//! WasmSequencer's absolute record that is already due: `asleep` still waits,
+//! so the command is dispatched on the next tick. A command answered other
+//! than OK ends the run, as does one unanswered for COMMAND_TIMEOUT_S.
+Trace reference(const std::vector<Record>& records, const Scenario& scenario, Sequencer sequencer) {
     Trace trace;
     const U64 start = microseconds(scenario.start);
     U64 now = 0;
@@ -178,6 +188,8 @@ Trace reference(const std::vector<Record>& records, const Scenario& scenario) {
             }
             if (due > now) {
                 now = tickAtOrAfter(due, scenario.tickUs);
+            } else if (record.descriptor == Record::ABSOLUTE && sequencer == Sequencer::WASM) {
+                now = tickAtOrAfter(now + 1, scenario.tickUs);
             }
             trace.push_back(Event{Event::COMMAND, now, record.packet, Fw::CmdResponse::OK});
             const I32 current = index++;
@@ -359,6 +371,23 @@ class Equivalence : public ::testing::Test {
         EXPECT_TRUE(cmdBench->finished()) << "CmdSequencer did not finish" << detail;
         EXPECT_TRUE(wasmBench->finished()) << "WasmSequencer did not finish" << detail;
 
+        // The behavior the sequence file calls for
+        bool sameReference = true;
+        if (hasReference(this->m_scenario)) {
+            const Trace cmdExpected = reference(this->m_sequence.records, this->m_scenario, Sequencer::CMD);
+            const Trace wasmExpected = reference(this->m_sequence.records, this->m_scenario, Sequencer::WASM);
+            EXPECT_TRUE(cmdTrace == cmdExpected) << "CmdSequencer departs from the reference\n  Reference:\n"
+                                                 << describe(cmdExpected) << detail;
+            EXPECT_TRUE(wasmTrace == wasmExpected) << "WasmSequencer departs from the reference\n  Reference:\n"
+                                                   << describe(wasmExpected) << detail;
+            sameReference = (cmdExpected == wasmExpected);
+        }
+        if (!sameReference) {
+            // An absolute time already past: the expected tick of difference,
+            // each trace checked against its own reference above
+            return;
+        }
+
         // Same behavior, event by event
         const size_t common = std::min(cmdTrace.size(), wasmTrace.size());
         for (size_t i = 0; i < common; i++) {
@@ -369,13 +398,6 @@ class Equivalence : public ::testing::Test {
             }
         }
         EXPECT_EQ(cmdTrace.size(), wasmTrace.size()) << "one sequencer did more than the other" << detail;
-
-        // And the behavior the sequence file calls for
-        if (hasReference(this->m_scenario)) {
-            const Trace expected = reference(this->m_sequence.records, this->m_scenario);
-            EXPECT_TRUE(cmdTrace == expected) << "CmdSequencer departs from the reference\n  Reference:\n"
-                                              << describe(expected) << detail;
-        }
     }
 
   private:
