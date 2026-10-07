@@ -171,8 +171,15 @@ The run is reproducible from the seed it prints. Tool options (`--dictionary`,
 
 The generator stays within the syntax both compilers accept. `fprime-seqgen` is
 more lenient than `fprime-wasm seq` in ways that are not worth reporting: it
-accepts too few or too many arguments, unquoted strings, `inf`, day 366 of a
-non-leap year, and only full command names. The copy given to `fprime-seqgen`
+accepts:
+* too few or too many arguments
+* unquoted strings
+* `yes` as a boolean
+* day 366 of a non-leap year
+* float literals such as `inf`, `nan`, `1e309` (infinity), `1.5x`, `1e`, and
+  `"1.5"`
+
+On the other hand, it only accepts full command names. The copy given to `fprime-seqgen`
 names each command in full.
 
 ### Findings

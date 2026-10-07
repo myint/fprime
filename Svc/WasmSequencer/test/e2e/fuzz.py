@@ -221,11 +221,12 @@ class Generator:
             return self.integer(definition["size"], definition["signed"], invalid)
         if kind == "float":
             if invalid:
-                return rng.choice(["3.5e38", "-1e39"]) if definition["size"] == 32 else "1e309"
+                # fprime-seqgen takes 1e309 as infinity, and 1.5x, 1e and nan as numbers
+                return rng.choice((["3.5e38", "-1e39"] if definition["size"] == 32 else []) + ["1..5", "--1.0"])
             return self.floating(definition["size"])
         if kind == "bool":
             if invalid:
-                return rng.choice(["yes", "2", "truth"])
+                return rng.choice(["2", "truth", "-1"])
             return rng.choice(["true", "false", "true", "false", "True", "FALSE"])
         if kind == "string":
             return self.string(definition["size"], invalid)
@@ -246,7 +247,9 @@ class Generator:
             texts = []
             for position, (name, member) in enumerate(members):
                 if "size" in member:
-                    text = "[" + ", ".join(self.value(member["type"]) for _ in range(member["size"])) + "]"
+                    # A member array: spoil one of its elements
+                    bad = rng.randrange(member["size"]) if position == spoiled else -1
+                    text = "[" + ", ".join(self.value(member["type"], invalid=(i == bad)) for i in range(member["size"])) + "]"
                 else:
                     text = self.value(member["type"], invalid=(position == spoiled))
                 texts.append(f"{name}: {text}")
@@ -763,6 +766,8 @@ def main():
             elif not case["valid"]:
                 case["kind"] = "compile"
                 case["message"] = "both compilers accept a sequence made invalid on purpose\n" + case["text"]
+                # A replay cannot tell which line was meant to be invalid
+                case["keep"] = True
             elif read_bin_times(case["source"].with_suffix(".bin")) != case["intents"]:
                 counts["seqgen-time"] += 1
             else:
@@ -800,7 +805,7 @@ def main():
             e2e.log(f"{case['name']}: {case['kind']}: {case['message'].splitlines()[0] if case['message'] else ''}")
             directory = save_finding(
                 findings, case["name"], case["kind"], case["text"], case["scenario"], case["message"], runner, args,
-                minimized=not args.no_minimize and case["kind"] != "generator",
+                minimized=not args.no_minimize and case["kind"] != "generator" and not case.get("keep"),
             )
             saved.append(directory)
             e2e.log(f"    saved to {directory}")
