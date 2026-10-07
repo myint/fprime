@@ -213,3 +213,60 @@ Svc/WasmSequencer/test/e2e/fuzz.py --replay <finding directory>
 ```
 
 The script exits nonzero if any finding was saved.
+
+### Results
+
+#### Campaign
+
+On 2026-10-07, the fuzzer ran for one hour on four parallel workers. It ran
+with:
+* `fprime-wasm` at commit
+  [`e2128bd`](https://github.com/myint/fprime-wasm/commit/e2128bdd7896f3d454cafcf93f029a36427934ee)
+  of `myint-seq`
+* this branch, based on F Prime `b1e5ac1`
+* the default invalid rate of 10%
+
+The command for each worker was:
+
+```shell
+Svc/WasmSequencer/test/e2e/fuzz.py --cases 10000000 --seconds 3600 --seed <seed>
+```
+
+| Seed | Cases | `pass` | `rejected` | Findings |
+|---|---|---|---|---|
+| 1001 | 11,900 | 10,723 | 1,176 | 1 `behavior` (a bench issue, see below) |
+| 1002 | 11,700 | 10,524 | 1,176 | 0 |
+| 1003 | 11,700 | 10,554 | 1,146 | 0 |
+| 1004 | 11,900 | 10,729 | 1,171 | 0 |
+| **Total** | **47,200** | **42,530** | **4,669** | **1** |
+
+No case showed WasmSequencer departing from CmdSequencer. The campaign also
+produced no compile disagreements, crashes, model mismatches or
+`seqgen-time` skips.
+
+#### The bench issue
+
+The one finding (seed 1001, case `c001666`) was in the bench, not in
+`WasmSequencer`. The case did the following:
+1. A cancel arrived while a command awaited a 4-second response.
+2. A second run started before that late response was delivered.
+
+The bench then saw two commands in flight at once. A response that arrives
+inside the next run is not a fair comparison: CmdSequencer would take it as its
+new command's own, while WasmSequencer tags each command and does not. The
+bench now delivers any outstanding response before it starts the next run, and
+the case passes on replay. The fix took effect partway through the campaign,
+from each worker's next batch.
+
+#### Earlier runs and validation
+
+Earlier, shorter runs (seeds 20261007, 424242 and others, about 3,000 cases in
+total) turned up the `fprime-seqgen` limitations listed above: time truncation,
+and lenient parsing of arguments, booleans and floats. The generator now avoids
+both. Those runs also found two generator mistakes, both fixed. None of these
+findings was in WasmSequencer.
+
+To check that the fuzzer can find a real defect, a 1 µs error was planted
+temporarily in WasmSequencer's relative sleep. With seed 3, the fuzzer reported
+it at the 14th case. It minimized the 27-line sequence to a single command in
+the simplest scenario. The planted error was then removed.
